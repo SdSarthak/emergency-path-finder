@@ -213,9 +213,13 @@ class FallbackDetector:
                 runs.append([entry])
 
         frame_area = float(image.shape[0] * image.shape[1])
+        # Quantise tread heights before counting them: the top and bottom edge of
+        # one physical tread are two Hough lines a few pixels apart, and counting
+        # both would let a skirting board pass as a staircase.
+        row_tolerance = max(6.0, image.shape[0] * 0.02)
         detections: List[Detection] = []
         for run in runs:
-            distinct_rows = {round(y / 4.0) for y, _ in run}
+            distinct_rows = {round(y / row_tolerance) for y, _ in run}
             if len(distinct_rows) < self.config.stairs_min_treads:
                 continue
             region = run[0][1]
