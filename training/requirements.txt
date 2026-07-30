@@ -1,14 +1,19 @@
-tensorflow==2.13.0
-torch==2.0.1
-torchvision==0.15.2
-ultralytics==8.0.196
-opencv-python==4.8.1.78
-numpy==1.24.3
-pandas==2.0.3
-Pillow==10.0.0
-matplotlib==3.7.2
-scikit-learn==1.3.0
-tqdm==4.66.1
-roboflow==1.1.17
-requests==2.31.0
-pyyaml==6.0.1
+# Training extras. Install the core requirements first:
+#   pip install -r requirements.txt -r training/requirements.txt
+#
+# Versions are ranges rather than exact pins: the exact pins this file used to
+# carry (tensorflow 2.13 / torch 2.0.1) do not resolve on Python 3.11+.
+ultralytics>=8.1,<9.0
+torch>=2.0
+torchvision>=0.15
+roboflow>=1.1
+Pillow>=9.5
+tqdm>=4.65
+pandas>=2.0
+matplotlib>=3.7
+requests>=2.31
+
+# Optional: only needed for the TFLite export consumed by the Flutter app.
+# Install manually if `--no-export` is not enough for you, since it is a large
+# download and does not have wheels for every Python version:
+#   pip install "tensorflow>=2.13,<2.17"

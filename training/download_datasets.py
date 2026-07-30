@@ -1,114 +1,93 @@
+#!/usr/bin/env python
+"""Fetch the Roboflow datasets used to train the detectors.
+
+With ``ROBOFLOW_API_KEY`` set (or ``--api-key``) this downloads them. Without a
+key it prints the manual steps and exits non-zero, so a scripted setup notices.
+
+    python training/download_datasets.py --list
+    python training/download_datasets.py --api-key rf_xxx
+    python training/download_datasets.py exit_signs_v2
 """
-Download datasets from Roboflow - Free emergency exit detection datasets
-"""
 
-import os
-import requests
-from pathlib import Path
+import argparse
+import sys
 
-def download_roboflow_dataset(project_url: str, dataset_name: str, output_dir: str):
-    """
-    Download dataset from Roboflow using direct URL
-    
-    Example URLs:
-    - Emergency Exit Signs v2: https://universe.roboflow.com/emergency-exit-signs/emergency-exit-signs-v2
-    - Stairs Detection: https://universe.roboflow.com/stairs-detection/stairs-fo4v5
-    - Escalator-Stairs: https://universe.roboflow.com/escalatorstairsdetection/escalator-stairs
-    """
-    
-    print(f"\n{'='*60}")
-    print(f"Downloading {dataset_name}...")
-    print(f"{'='*60}")
-    
-    # Create output directory
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
-    # Instructions for manual download
-    print(f"""
-    To download {dataset_name}:
-    
-    1. Visit: {project_url}
-    2. Click 'Export' button
-    3. Select 'YOLOv8' format
-    4. Choose 'Download zip'
-    5. Extract to: {output_dir}
-    
-    Or use Roboflow Python API:
-    
-    from roboflow import Roboflow
-    rf = Roboflow(api_key="YOUR_API_KEY")
-    project = rf.workspace("...").project("...")
-    dataset = project.versions(1).download("yolov8")
-    """)
-    
-    return output_dir
+import _bootstrap  # noqa: F401  (puts the project root on sys.path)
 
-def setup_datasets():
-    """Setup all required datasets"""
-    
-    base_dir = Path(__file__).parent.parent / "datasets"
-    
-    datasets = [
-        {
-            "name": "Emergency Exit Signs v2",
-            "url": "https://universe.roboflow.com/emergency-exit-signs/emergency-exit-signs-v2",
-            "dir": "exit_signs_v2",
-            "images": 1070,
-        },
-        {
-            "name": "Stairs Detection",
-            "url": "https://universe.roboflow.com/stairs-detection/stairs-fo4v5",
-            "dir": "stairs_detection",
-            "images": 7890,
-        },
-        {
-            "name": "Escalator-Stairs",
-            "url": "https://universe.roboflow.com/escalatorstairsdetection/escalator-stairs",
-            "dir": "escalator_stairs",
-            "images": 8690,
-        },
-        {
-            "name": "Exit-Detection (Doors, Obstacles, Exits)",
-            "url": "https://universe.roboflow.com/project1exits/exit-detection-w00yi",
-            "dir": "exit_detection",
-            "images": 36,
-        },
-    ]
-    
-    print("\n" + "="*80)
-    print("EMERGENCY PATH FINDER - DATASET SETUP")
-    print("="*80)
-    print("\nYou have two options to download datasets:\n")
-    print("OPTION 1: Automatic download (requires Roboflow account)")
-    print("  - Sign up free at: https://roboflow.com")
-    print("  - Get API key from account settings")
-    print("  - Run: python download_datasets.py --api-key YOUR_KEY\n")
-    print("OPTION 2: Manual download")
-    print("  - Download each dataset from Roboflow")
-    print("  - Extract to respective folders\n")
-    print("="*80)
-    
-    for dataset in datasets:
-        output_path = base_dir / dataset["dir"]
-        print(f"\n{dataset['name']}")
-        print(f"  Location: {output_path}")
-        print(f"  Images: ~{dataset['images']}")
-        print(f"  Link: {dataset['url']}")
-        
-        download_roboflow_dataset(
-            dataset["url"],
-            dataset["name"],
-            str(output_path)
+from emergency_path_finder.config import get_settings
+from emergency_path_finder.datasets import (
+    DATASETS,
+    download,
+    is_downloaded,
+    manual_instructions,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "names",
+        nargs="*",
+        metavar="NAME",
+        default=[],
+        help=f"datasets to download (default: all). One of: {', '.join(sorted(DATASETS))}",
+    )
+    parser.add_argument("--api-key", help="Roboflow API key (or set ROBOFLOW_API_KEY)")
+    parser.add_argument("--list", action="store_true", help="list datasets and exit")
+    parser.add_argument(
+        "--overwrite", action="store_true", help="re-download even if present"
+    )
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    settings = get_settings()
+    unknown = [name for name in args.names if name not in DATASETS]
+    if unknown:
+        print(
+            f"unknown dataset(s): {', '.join(unknown)}. "
+            f"Known: {', '.join(sorted(DATASETS))}",
+            file=sys.stderr,
         )
-    
-    print("\n" + "="*80)
-    print("NEXT STEPS:")
-    print("="*80)
-    print("1. Download datasets from Roboflow")
-    print("2. Run: python train_exit_detector.py")
-    print("3. Run: python train_stairs_detector.py")
-    print("4. Models will be saved in ml_models/ folder")
-    print("="*80)
+        return 2
+    keys = args.names or sorted(DATASETS)
+
+    if args.list:
+        for key in sorted(DATASETS):
+            spec = DATASETS[key]
+            state = "present" if is_downloaded(spec, settings) else "missing"
+            print(f"{key:<20} {state:<8} ~{spec.approx_images:>6} images  {spec.url}")
+        return 0
+
+    print(f"Datasets directory: {settings.datasets_dir}")
+    failures = 0
+    for key in keys:
+        spec = DATASETS[key]
+        print(f"\n=== {spec.name} ===")
+        try:
+            path = download(
+                key,
+                api_key=args.api_key,
+                settings=settings,
+                overwrite=args.overwrite,
+            )
+            print(f"ready: {path}")
+        except Exception as exc:
+            failures += 1
+            print(f"could not download automatically: {exc}", file=sys.stderr)
+            print(manual_instructions(spec, spec.target_dir(settings)), file=sys.stderr)
+
+    if failures:
+        print(
+            f"\n{failures} of {len(keys)} dataset(s) still need attention.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("\nAll datasets ready. Next: python training/train_exit_detector.py")
+    return 0
+
 
 if __name__ == "__main__":
-    setup_datasets()
+    raise SystemExit(main())

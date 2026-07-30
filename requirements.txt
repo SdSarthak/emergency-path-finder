@@ -1,0 +1,6 @@
+# Runtime dependencies for the emergency_path_finder package.
+# This is all you need to run detection and navigation on a laptop.
+# Training additionally needs training/requirements.txt.
+numpy>=1.23,<2.0
+opencv-python>=4.7,<5.0
+PyYAML>=6.0,<7.0

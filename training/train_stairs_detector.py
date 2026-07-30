@@ -1,8 +1,12 @@
 #!/usr/bin/env python
-"""Train the exit / stairs / door detector on the Emergency Exit Signs dataset.
+"""Train the stairs / escalator detector.
 
-    python training/train_exit_detector.py
-    python training/train_exit_detector.py --epochs 100 --batch 16 --device cuda
+Stairs are the part of an evacuation route that hurts you if you get it wrong,
+so they get their own model trained on a dedicated dataset rather than sharing
+capacity with exit signage.
+
+    python training/train_stairs_detector.py
+    python training/train_stairs_detector.py --dataset escalator_stairs --epochs 80
 """
 
 import argparse
@@ -14,19 +18,23 @@ from emergency_path_finder.config import get_settings
 from emergency_path_finder.datasets import DATASETS, is_downloaded, manual_instructions
 from emergency_path_finder.training import TrainingConfig, resolve_device, train
 
-DATASET_KEY = "exit_signs_v2"
-CLASS_NAMES = ("exit", "stairs", "door")
+CLASS_NAMES = ("stairs", "escalator")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--dataset",
+        default="stairs_detection",
+        choices=["stairs_detection", "escalator_stairs"],
+    )
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--imgsz", type=int, default=416)
     parser.add_argument("--batch", type=int, default=8, help="lower this if you hit OOM")
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--device", help="cuda, cpu or a device index (default: auto)")
     parser.add_argument("--base-model", default="yolov8n.pt")
-    parser.add_argument("--name", default="exit_detector", help="run name under ml_models/")
+    parser.add_argument("--name", default="stairs_detector", help="run name under ml_models/")
     parser.add_argument(
         "--no-export", action="store_true", help="skip the TFLite export step"
     )
@@ -36,22 +44,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     settings = get_settings()
-    spec = DATASETS[DATASET_KEY]
+    spec = DATASETS[args.dataset]
     dataset_dir = spec.target_dir(settings)
 
     if not is_downloaded(spec, settings):
         print(f"Dataset not found at {dataset_dir}\n", file=sys.stderr)
         print(manual_instructions(spec, dataset_dir), file=sys.stderr)
         print(
-            "\nOr run: python training/download_datasets.py exit_signs_v2",
+            f"\nOr run: python training/download_datasets.py {args.dataset}",
             file=sys.stderr,
         )
         return 1
 
     device = resolve_device(args.device)
-    print("Emergency Path Finder - exit detector training")
+    print("Emergency Path Finder - stairs detector training")
     print(f"  dataset : {dataset_dir}")
-    print(f"  classes : {', '.join(CLASS_NAMES)}")
     print(f"  device  : {device}")
     print(f"  epochs  : {args.epochs}  imgsz={args.imgsz}  batch={args.batch}")
 
@@ -76,7 +83,7 @@ def main() -> int:
         return 1
 
     print(f"\nBest weights: {best}")
-    print("Run it with: python -m emergency_path_finder --image <photo.jpg>")
+    print("Point inference at it with EPF_MODEL_PATH or --model.")
     return 0
 
 
