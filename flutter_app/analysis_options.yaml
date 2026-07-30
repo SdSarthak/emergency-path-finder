@@ -1,0 +1,14 @@
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    - avoid_print
+    - prefer_const_constructors
+    - prefer_final_locals
+    - unawaited_futures
+
+analyzer:
+  errors:
+    # Unused imports drifted into every file in this project once already.
+    unused_import: error
+    unused_local_variable: error

@@ -1,61 +1,59 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.emergency_path_finder">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Camera permission for real-time detection -->
+    <!-- Camera feed for real-time detection. -->
     <uses-permission android:name="android.permission.CAMERA" />
-    
-    <!-- Sensor permissions for navigation -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    
-    <!-- Flash/torch permission -->
-    <uses-permission android:name="android.permission.FLASHLIGHT" />
-    
-    <!-- Storage permission for saving detection logs (optional) -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
-    <!-- Hardware requirements -->
+    <!-- Torch, for detection and for the user, in the dark. -->
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
+
+    <!-- No INTERNET permission on purpose: the app is fully offline. -->
+
     <uses-feature
         android:name="android.hardware.camera"
         android:required="true" />
+    <uses-feature
+        android:name="android.hardware.camera.flash"
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.camera.autofocus"
         android:required="false" />
     <uses-feature
         android:name="android.hardware.sensor.accelerometer"
         android:required="false" />
-    <uses-feature
-        android:name="android.hardware.sensor.compass"
-        android:required="false" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="Path Finder"
         android:supportsRtl="true"
-        android:theme="@style/Theme.EmergencyPathFinder"
         android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"
+            android:exported="true"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:launchMode="singleTop"
             android:theme="@style/LaunchTheme"
             android:windowSoftInputMode="adjustResize">
+
+            <!-- Keeps the launch background up until Flutter draws its first frame. -->
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        
-        <!-- Flutter becomes a tool -->
-        <activity android:name="io.flutter.embedding.android.FlutterActivity" />
-        
+
+        <!-- Required by the v2 Android embedding. -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
     </application>
 
 </manifest>

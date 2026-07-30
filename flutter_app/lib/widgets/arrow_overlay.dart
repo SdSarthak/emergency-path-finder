@@ -1,42 +1,42 @@
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+
 import '../models/detection_result.dart';
 
+/// Draws the navigation arrow, detection boxes and confidence readouts over the
+/// camera preview.
 class ArrowOverlay extends StatelessWidget {
+  /// Bearing in degrees clockwise from straight ahead.
   final double angle;
   final DetectionResult detectionResult;
 
   const ArrowOverlay({
     required this.angle,
     required this.detectionResult,
-    Key? key,
-  }) : super(key: key);
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final centerX = size.width / 2;
-    final centerY = size.height / 2;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Main arrow pointing to target
         CustomPaint(
-          painter: ArrowPainter(
+          painter: _ArrowPainter(
             angle: angle,
-            size: size,
+            boxes: detectionResult,
           ),
         ),
-
-        // Confidence indicator
         Positioned(
-          top: 80,
-          left: 20,
+          top: 96,
+          left: 16,
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: _getConfidenceColor(detectionResult),
+              color: _confidenceColor(detectionResult),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -44,29 +44,27 @@ class ArrowOverlay extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (detectionResult.exits.isNotEmpty)
-                  _buildDetectionInfo(
-                    'EXIT',
-                    detectionResult.exits.first.confidence,
-                    Colors.greenAccent,
+                  _ConfidenceBar(
+                    label: 'EXIT',
+                    confidence: detectionResult.exits.first.confidence,
+                    color: Colors.greenAccent,
                   ),
                 if (detectionResult.stairs.isNotEmpty)
-                  _buildDetectionInfo(
-                    'STAIRS',
-                    detectionResult.stairs.first.confidence,
-                    Colors.yellowAccent,
+                  _ConfidenceBar(
+                    label: 'STAIRS',
+                    confidence: detectionResult.stairs.first.confidence,
+                    color: Colors.yellowAccent,
                   ),
                 if (detectionResult.doors.isNotEmpty)
-                  _buildDetectionInfo(
-                    'DOOR',
-                    detectionResult.doors.first.confidence,
-                    Colors.blueAccent,
+                  _ConfidenceBar(
+                    label: 'DOOR',
+                    confidence: detectionResult.doors.first.confidence,
+                    color: Colors.blueAccent,
                   ),
               ],
             ),
           ),
         ),
-
-        // Distance indicator
         Positioned(
           bottom: 100,
           left: 0,
@@ -79,7 +77,7 @@ class ArrowOverlay extends StatelessWidget {
                 borderRadius: BorderRadius.circular(30),
               ),
               child: Text(
-                _getDistanceText(detectionResult),
+                headlineFor(detectionResult),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
@@ -89,77 +87,34 @@ class ArrowOverlay extends StatelessWidget {
             ),
           ),
         ),
-
-        // Direction labels
-        _buildDirectionLabel('↑ UP', 20, centerX - 30, context),
-        _buildDirectionLabel('↓ DOWN', size.height - 60, centerX - 30, context),
-        _buildDirectionLabel('← LEFT', centerY - 20, 20, context),
-        _buildDirectionLabel('RIGHT →', centerY - 20, size.width - 70, context),
+        _label('^ UP', 24, size.width / 2 - 20),
+        _label('v DOWN', size.height - 64, size.width / 2 - 28),
+        _label('< LEFT', size.height / 2 - 20, 16),
+        _label('RIGHT >', size.height / 2 - 20, size.width - 76),
       ],
     );
   }
 
-  Widget _buildDetectionInfo(
-    String label,
-    double confidence,
-    Color color,
-  ) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: color,
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Container(
-          width: 40,
-          height: 6,
-          decoration: BoxDecoration(
-            color: Colors.grey[700],
-            borderRadius: BorderRadius.circular(3),
-          ),
-          child: Container(
-            width: 40 * confidence,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(3),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _getDistanceText(DetectionResult result) {
-    if (result.exits.isNotEmpty) {
-      return 'EXIT AHEAD! FOLLOW ARROW';
-    } else if (result.stairs.isNotEmpty) {
-      return 'STAIRS - ${result.stairs.first.direction?.toUpperCase() ?? "AHEAD"}';
-    } else if (result.doors.isNotEmpty) {
-      return 'DOOR DETECTED';
+  /// The one line the user reads while running.
+  static String headlineFor(DetectionResult result) {
+    if (result.exits.isNotEmpty) return 'EXIT AHEAD - FOLLOW ARROW';
+    if (result.stairs.isNotEmpty) {
+      final direction = result.stairs.first.direction ?? 'ahead';
+      return 'STAIRS - ${direction.toUpperCase()}';
     }
-    return '';
+    if (result.doors.isNotEmpty) return 'DOOR DETECTED';
+    return 'SCANNING';
   }
 
-  Color _getConfidenceColor(DetectionResult result) {
-    if (result.exits.isNotEmpty &&
-        result.exits.first.confidence > 0.8) {
+  static Color _confidenceColor(DetectionResult result) {
+    final target = result.primaryTarget;
+    if (target != null && target.label == 'exit' && target.confidence > 0.8) {
       return Colors.green.withAlpha(200);
     }
     return Colors.orange.withAlpha(200);
   }
 
-  Widget _buildDirectionLabel(
-    String text,
-    double top,
-    double left,
-    BuildContext context,
-  ) {
+  static Widget _label(String text, double top, double left) {
     return Positioned(
       top: top,
       left: left,
@@ -175,67 +130,145 @@ class ArrowOverlay extends StatelessWidget {
   }
 }
 
-class ArrowPainter extends CustomPainter {
-  final double angle;
-  final Size size;
+/// A label and a bar whose filled fraction is the detection confidence.
+class _ConfidenceBar extends StatelessWidget {
+  final String label;
+  final double confidence;
+  final Color color;
 
-  ArrowPainter({required this.angle, required this.size});
+  const _ConfidenceBar({
+    required this.label,
+    required this.confidence,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // A fixed-width Container passes tight constraints to its child, so
+          // the fill has to be an Align/widthFactor rather than a sized box -
+          // otherwise every bar renders full regardless of confidence.
+          Container(
+            width: 48,
+            height: 6,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade700,
+              borderRadius: BorderRadius.circular(3),
+            ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              widthFactor: confidence.clamp(0.0, 1.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ArrowPainter extends CustomPainter {
+  final double angle;
+  final DetectionResult boxes;
+
+  const _ArrowPainter({required this.angle, required this.boxes});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
+    _paintDetectionBoxes(canvas, size);
+    _paintArrow(canvas, size);
+  }
+
+  void _paintDetectionBoxes(Canvas canvas, Size size) {
+    if (boxes.frameWidth <= 0 || boxes.frameHeight <= 0) return;
+    final scaleX = size.width / boxes.frameWidth;
+    final scaleY = size.height / boxes.frameHeight;
+
+    void drawGroup(List<Detection> group, Color color) {
+      final paint = Paint()
+        ..color = color
+        ..strokeWidth = 3
+        ..style = PaintingStyle.stroke;
+      for (final detection in group) {
+        canvas.drawRect(
+          Offset(detection.box.x * scaleX, detection.box.y * scaleY) &
+              Size(detection.box.width * scaleX, detection.box.height * scaleY),
+          paint,
+        );
+      }
+    }
+
+    drawGroup(boxes.exits, Colors.greenAccent);
+    drawGroup(boxes.stairs, Colors.yellowAccent);
+    drawGroup(boxes.doors, Colors.blueAccent);
+  }
+
+  void _paintArrow(Canvas canvas, Size size) {
+    final stroke = Paint()
       ..color = Colors.greenAccent
       ..strokeWidth = 4
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
-
-    final fillPaint = Paint()
+    final fill = Paint()
       ..color = Colors.greenAccent.withAlpha(100)
       ..style = PaintingStyle.fill;
 
-    final centerX = size.width / 2;
-    final centerY = size.height / 2;
-    final arrowLength = 150.0;
-    final arrowHeadSize = 40.0;
+    final center = Offset(size.width / 2, size.height / 2);
+    final arrowLength = math.min(size.width, size.height) * 0.25;
+    final headSize = arrowLength * 0.28;
 
-    // Calculate arrow direction
     final radians = angle * math.pi / 180;
-    final endX = centerX + arrowLength * math.sin(radians);
-    final endY = centerY - arrowLength * math.cos(radians);
-
-    // Draw arrow shaft
-    canvas.drawLine(
-      Offset(centerX, centerY),
-      Offset(endX, endY),
-      paint,
+    final tip = Offset(
+      center.dx + arrowLength * math.sin(radians),
+      center.dy - arrowLength * math.cos(radians),
     );
 
-    // Draw arrow head (triangle)
-    final headRadians1 = radians + math.pi / 6;
-    final headRadians2 = radians - math.pi / 6;
+    canvas.drawLine(center, tip, stroke);
 
-    final head1X = endX + arrowHeadSize * math.sin(headRadians1);
-    final head1Y = endY - arrowHeadSize * math.cos(headRadians1);
-
-    final head2X = endX + arrowHeadSize * math.sin(headRadians2);
-    final head2Y = endY - arrowHeadSize * math.cos(headRadians2);
-
+    // Arrow head: two points swept back from the tip along the bearing.
+    final left = radians + math.pi * 5 / 6;
+    final right = radians - math.pi * 5 / 6;
     final path = Path()
-      ..moveTo(endX, endY)
-      ..lineTo(head1X, head1Y)
-      ..lineTo(head2X, head2Y)
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(
+        tip.dx + headSize * math.sin(left),
+        tip.dy - headSize * math.cos(left),
+      )
+      ..lineTo(
+        tip.dx + headSize * math.sin(right),
+        tip.dy - headSize * math.cos(right),
+      )
       ..close();
 
-    canvas.drawPath(path, fillPaint);
-    canvas.drawPath(path, paint);
+    canvas.drawPath(path, fill);
+    canvas.drawPath(path, stroke);
 
-    // Draw circular center indicator
-    canvas.drawCircle(Offset(centerX, centerY), 15, fillPaint);
-    canvas.drawCircle(Offset(centerX, centerY), 15, paint);
+    canvas.drawCircle(center, 15, fill);
+    canvas.drawCircle(center, 15, stroke);
   }
 
   @override
-  bool shouldRepaint(ArrowPainter oldDelegate) {
-    return oldDelegate.angle != angle;
-  }
+  bool shouldRepaint(_ArrowPainter oldDelegate) =>
+      oldDelegate.angle != angle || oldDelegate.boxes != boxes;
 }

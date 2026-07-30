@@ -1,134 +1,155 @@
 import 'dart:math' as math;
+
 import '../models/detection_result.dart';
 
+/// Direction labels the overlay can render.
+class NavDirection {
+  static const String left = 'LEFT';
+  static const String right = 'RIGHT';
+  static const String straight = 'STRAIGHT';
+  static const String upstairs = 'UPSTAIRS';
+  static const String downstairs = 'DOWNSTAIRS';
+  static const String forward = 'FORWARD';
+}
+
+/// How confident we are that a usable escape route is on screen.
+class Urgency {
+  static const String critical = 'CRITICAL';
+  static const String high = 'HIGH';
+  static const String medium = 'MEDIUM';
+  static const String low = 'LOW';
+}
+
+/// Turns detections into an instruction.
+///
+/// This mirrors `emergency_path_finder/navigation.py`; the thresholds are
+/// regression-tested there against synthetic scenes.
 class NavigationService {
-  /// Calculate arrow angle based on primary detection target
+  /// Fraction of frame width a target must be off-centre before we call a turn.
+  static const double turnDeadzone = 0.12;
+
+  /// Arrow bearing in degrees clockwise from straight ahead (0 = ahead,
+  /// 90 = hard right, 270 = hard left).
   double calculateArrowAngle(
     DetectionResult result,
     double deviceOrientation,
   ) {
     final target = result.primaryTarget;
     if (target == null) return 0.0;
+    if (result.frameWidth <= 0 || result.frameHeight <= 0) return 0.0;
 
-    // Calculate angle from center of frame to target
-    final frameCenterX = result.frameWidth / 2.0;
-    final frameCenterY = result.frameHeight / 2.0;
+    final deltaX = target.centerX - result.frameWidth / 2.0;
+    final deltaY = target.centerY - result.frameHeight / 2.0;
 
-    final deltaX = target.centerX - frameCenterX;
-    final deltaY = target.centerY - frameCenterY;
-
-    // Calculate angle in degrees
-    var angle = math.atan2(deltaX, -deltaY) * 180 / math.pi;
-
-    // Adjust for device orientation
-    angle = (angle - deviceOrientation + 360) % 360;
-
-    return angle;
+    final angle = math.atan2(deltaX, -deltaY) * 180 / math.pi;
+    // Dart's % always returns a non-negative value for a positive divisor, so
+    // this lands in [0, 360) without an extra wrap.
+    return (angle - deviceOrientation) % 360;
   }
 
-  /// Get distance estimate based on bounding box size
-  double estimateDistance(Detection detection, int frameWidth) {
-    // Rough approximation: larger box = closer object
-    final boxArea = detection.box.width * detection.box.height;
-    final frameArea = frameWidth * frameWidth;
-    final ratio = boxArea / frameArea;
+  /// Which way to move, given what is on screen.
+  String getBestDirection(DetectionResult result) {
+    final target = result.primaryTarget;
+    if (target == null) return NavDirection.forward;
 
-    // Convert to rough distance in meters (assuming ~2m at 10% of frame)
-    if (ratio < 0.01) return 10.0;
-    if (ratio < 0.05) return 5.0;
-    if (ratio < 0.15) return 3.0;
-    if (ratio < 0.30) return 1.5;
-    return 0.5;
+    if (target.label == 'stairs') {
+      if (target.direction == 'up') return NavDirection.upstairs;
+      if (target.direction == 'down') return NavDirection.downstairs;
+    }
+
+    final centerX = result.frameWidth / 2.0;
+    final deadzone = result.frameWidth * turnDeadzone;
+    final offset = target.centerX - centerX;
+    if (offset < -deadzone) return NavDirection.left;
+    if (offset > deadzone) return NavDirection.right;
+    return NavDirection.straight;
   }
 
-  /// Generate navigation instruction based on detection
+  /// Rough distance from apparent size, assuming a ~2 m tall object.
+  /// Only the ordering is meaningful.
+  double estimateDistance(Detection detection, int frameHeight) {
+    if (frameHeight <= 0 || detection.box.height <= 0) return 15.0;
+    final ratio = detection.box.height / frameHeight;
+    final distance = 1.0 / math.max(ratio, 0.001);
+    return distance.clamp(0.5, 15.0);
+  }
+
+  /// Short, imperative text for the status bar.
   String getNavigationInstruction(DetectionResult result) {
-    if (result.exits.isNotEmpty) {
-      final exit = result.exits.first;
-      final distance = estimateDistance(exit, result.frameWidth);
-      return 'EXIT FOUND! ${distance.toStringAsFixed(1)}m away';
-    }
+    final target = result.primaryTarget;
+    if (target == null) return 'Searching for exits - keep moving forward';
 
-    if (result.stairs.isNotEmpty) {
-      final stair = result.stairs.first;
-      final direction = stair.direction ?? 'ahead';
-      return 'Stairs $direction - ${stair.confidence > 0.7 ? "Clear path" : "Be careful"}';
-    }
+    final direction = getBestDirection(result);
+    final distance = estimateDistance(target, result.frameHeight);
 
-    if (result.doors.isNotEmpty) {
-      final distance = estimateDistance(result.doors.first, result.frameWidth);
-      return 'Door ahead at ${distance.toStringAsFixed(1)}m';
+    switch (target.label) {
+      case 'exit':
+        return direction == NavDirection.straight
+            ? 'EXIT AHEAD - ${distance.toStringAsFixed(0)} m, go straight'
+            : 'EXIT FOUND - ${distance.toStringAsFixed(0)} m, '
+                'go ${direction.toLowerCase()}';
+      case 'stairs':
+        final where = target.direction ?? 'ahead';
+        final caution = target.confidence > 0.6 ? 'clear' : 'take care';
+        return 'Stairs $where at ${distance.toStringAsFixed(0)} m - $caution';
+      default:
+        return 'Door at ${distance.toStringAsFixed(0)} m - '
+            'go ${direction.toLowerCase()}';
     }
-
-    return 'Searching for exits... Move forward';
   }
 
-  /// Analyze corridor layout for pathfinding without signs
-  String analyzeCorridorLayout(DetectionResult result) {
-    final frameCenter = result.frameWidth / 2.0;
-    int leftOpenings = 0;
-    int rightOpenings = 0;
+  /// Urgency classification. CRITICAL is the *best* case: a marked exit is
+  /// visible and the user should move now.
+  String calculateUrgency(DetectionResult result, double lightQuality) {
+    final hasExit = result.exits.isNotEmpty;
+    if (hasExit && lightQuality > 0.4) return Urgency.critical;
+    if (result.hasDetections) return Urgency.high;
+    if (lightQuality > 0.5) return Urgency.medium;
+    return Urgency.low;
+  }
 
-    // Count doors/openings on left and right
-    for (final door in result.doors) {
-      if (door.centerX < frameCenter - 100) {
-        leftOpenings++;
-      } else if (door.centerX > frameCenter + 100) {
-        rightOpenings++;
+  /// Pathfinding without signage: pick the side with more openings.
+  String analyzeCorridorLayout(DetectionResult result) {
+    final centerX = result.frameWidth / 2.0;
+    final deadzone = result.frameWidth * turnDeadzone;
+    var left = 0;
+    var right = 0;
+
+    for (final opening in [...result.doors, ...result.stairs]) {
+      if (opening.centerX < centerX - deadzone) {
+        left++;
+      } else if (opening.centerX > centerX + deadzone) {
+        right++;
       }
     }
 
-    if (leftOpenings > rightOpenings) {
-      return 'Take LEFT - opening detected';
-    } else if (rightOpenings > leftOpenings) {
-      return 'Take RIGHT - opening detected';
-    }
-
-    // If no clear indication, suggest going forward
+    if (left > right) return 'Take LEFT - opening detected';
+    if (right > left) return 'Take RIGHT - opening detected';
     return 'Continue forward - no obstacles detected';
   }
 
-  /// Vanishing point detection for corridor navigation
-  /// Returns angle to vanishing point (center of corridor)
+  /// Average horizontal position of the structural detections, expressed as an
+  /// angle in [-45, 45] degrees. Stands in for a corridor vanishing point when
+  /// no signage is visible.
   double? detectVanishingPoint(DetectionResult result) {
-    if (result.doors.isEmpty && result.stairs.isEmpty) {
-      return null;
+    final structural = [...result.doors, ...result.stairs];
+    if (structural.isEmpty || result.frameWidth <= 0) return null;
+
+    var sum = 0.0;
+    for (final detection in structural) {
+      sum += detection.centerX;
     }
-
-    // Calculate average position of structural elements
-    final allDetections = [
-      ...result.doors,
-      ...result.stairs,
-    ];
-
-    if (allDetections.isEmpty) return null;
-
-    final avgX = allDetections.fold<double>(0.0, (sum, d) => sum + d.centerX) /
-        allDetections.length;
-    final frameCenterX = result.frameWidth / 2.0;
-
-    // Vanishing point angle (positive = right, negative = left)
-    return (avgX - frameCenterX) / result.frameWidth * 45.0; // ±45 degrees max
+    final average = sum / structural.length;
+    return (average - result.frameWidth / 2.0) / result.frameWidth * 45.0;
   }
 
-  /// Determine if person is going the right direction
-  bool isMovingCorrectly(
-    DetectionResult current,
-    DetectionResult previous, {
-    required double personHeading,
-  }) {
-    if (!current.hasDetections || !previous.hasDetections) return true;
+  /// True while the target is growing in frame, i.e. the user is closing on it.
+  bool isMovingCorrectly(DetectionResult current, DetectionResult previous) {
+    final currentTarget = current.primaryTarget;
+    final previousTarget = previous.primaryTarget;
+    if (currentTarget == null || previousTarget == null) return true;
 
-    // If exit is getting closer (larger in frame), good direction
-    if (current.primaryTarget != null && previous.primaryTarget != null) {
-      final currentArea =
-          current.primaryTarget!.box.width * current.primaryTarget!.box.height;
-      final previousArea = previous.primaryTarget!.box.width *
-          previous.primaryTarget!.box.height;
-
-      return currentArea > previousArea * 0.95; // Allow small variations
-    }
-
-    return true;
+    // 5% tolerance absorbs the frame-to-frame jitter of the detector.
+    return currentTarget.box.area > previousTarget.box.area * 0.95;
   }
 }
