@@ -1,0 +1,53 @@
+name: emergency_path_finder
+description: Real-time emergency exit detection and navigation app using ML.
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Camera and ML
+  camera: ^0.10.5+5
+  tflite_flutter: ^0.10.3
+  tflite_flutter_helper: ^0.0.1
+
+  # Sensors
+  sensors_plus: ^5.1.0
+  compass_pm: ^0.0.7
+  geolocator: ^9.0.2
+
+  # UI
+  cupertino_icons: ^1.0.2
+  flutter_compass: ^0.8.0
+
+  # Utilities
+  image: ^4.0.17
+  path_provider: ^2.0.11
+  permission_handler: ^11.4.4
+  torch_light: ^0.5.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/models/
+    - assets/
+
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700

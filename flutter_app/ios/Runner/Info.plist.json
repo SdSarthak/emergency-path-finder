@@ -1,0 +1,37 @@
+{
+  "Info": {
+    "Description": "iOS configuration for Emergency Path Finder",
+    "Notes": "Generated for iOS app permissions and camera access"
+  },
+  
+  "NSCameraUsageDescription": "We need camera access to detect emergency exits and navigate you to safety.",
+  
+  "NSLocationWhenInUseUsageDescription": "We need location access to help you navigate during emergencies.",
+  
+  "NSLocationAlwaysAndWhenInUseUsageDescription": "Location access helps us provide better navigation in emergencies.",
+  
+  "NSMotionUsageDescription": "We need motion sensor access to detect your device orientation and improve navigation.",
+  
+  "NSLocationAlwaysUsageDescription": "Location data is used only to assist in emergency evacuation.",
+  
+  "UIRequiredDeviceCapabilities": [
+    "camera",
+    "accelerometer",
+    "gyroscope"
+  ],
+  
+  "UIDeviceFamily": [
+    1,
+    2
+  ],
+  
+  "Requirements": {
+    "MinimumOSVersion": "11.0",
+    "SupportedInterfaceOrientations": [
+      "UIInterfaceOrientationPortrait",
+      "UIInterfaceOrientationPortraitUpsideDown",
+      "UIInterfaceOrientationLandscapeLeft",
+      "UIInterfaceOrientationLandscapeRight"
+    ]
+  }
+}
