@@ -1,231 +1,239 @@
-# Getting Started Guide
+# Setup Guide
 
-## Quick Setup (5-10 minutes)
+## Prerequisites
 
-### Prerequisites
-- Python 3.8+
-- Flutter SDK
-- Android Studio or Xcode (for mobile)
-- Git
-
-### Step 1: Install Python Dependencies
-```bash
-cd training
-pip install -r requirements.txt
-```
-
-### Step 2: Download Datasets
-```bash
-python download_datasets.py
-```
-
-Follow the on-screen instructions to download datasets from Roboflow:
-- Emergency Exit Signs v2 (1,070 images)
-- Stairs Detection (7,890 images)
-- Escalator-Stairs (8,690 images)
-
-**Alternative (Quick Start):** Use pre-trained models
-```bash
-python download_pretrained_models.py
-```
-
-### Step 3: Train Models (Optional)
-If using your own dataset:
-```bash
-python train_exit_detector.py
-```
-
-This will:
-- Train YOLOv8-nano model
-- Convert to TensorFlow Lite
-- Copy to flutter app automatically
-
-**Estimated time:**
-- CPU: 2-4 hours
-- GPU (NVIDIA): 20-30 minutes
-- With pretrained models: 5 minutes
-
-### Step 4: Build Flutter App
-
-```bash
-cd flutter_app
-
-# Get dependencies
-flutter pub get
-
-# Run on connected device or emulator
-flutter run
-
-# Or build APK for Android
-flutter build apk --release
-
-# Or build IPA for iOS
-flutter build ios --release
-```
-
-## Project Structure
-
-```
-Emergency path finder/
-├── flutter_app/              # Mobile app
-│   ├── lib/
-│   │   ├── main.dart        # App entry point
-│   │   ├── screens/         # UI screens
-│   │   ├── services/        # ML detection, navigation
-│   │   ├── models/          # Data structures
-│   │   └── widgets/         # UI components
-│   ├── assets/models/       # TFLite models
-│   └── pubspec.yaml         # Dependencies
-│
-├── training/                # ML training
-│   ├── download_datasets.py
-│   ├── train_exit_detector.py
-│   ├── fallback_detection.py
-│   └── requirements.txt
-│
-├── ml_models/               # Trained models
-│   └── exit_detector/
-│       ├── best.pt          # PyTorch
-│       └── best.tflite      # Mobile optimized
-│
-├── datasets/                # Raw datasets
-│   ├── exit_signs_v2/
-│   ├── stairs_detection/
-│   └── escalator_stairs/
-│
-└── README.md
-```
-
-## Features Implemented
-
-### ✅ Detection
-- Real-time exit sign detection (YOLOv8-nano)
-- Stairs detection (up/down/left/right)
-- Door detection
-- Fallback methods:
-  - Color-based exit sign detection
-  - Edge-based door detection
-  - Vanishing point corridor navigation
-
-### ✅ Navigation
-- Arrow overlay pointing to exits
-- Distance estimation
-- Device orientation tracking
-- Compass-based direction
-
-### ✅ User Interface
-- Live camera feed
-- Real-time arrow guidance
-- Flash control
-- Detection info overlay
-- Status text
-
-### ✅ Mobile Features
-- Camera access
-- Sensor integration (accelerometer, compass)
-- Torch/flashlight control
-- Offline operation
-- Low-power mode
-
-## Performance Metrics
-
-**Mobile App:**
-- Model size: 10-15 MB
-- Inference time: 100-150ms (10 FPS)
-- Memory usage: 200-300 MB
-- Battery impact: ~20% per hour
-
-**Accuracy (on test set):**
-- Exit signs: 85-92%
-- Stairs: 80-88%
-- Doors: 75-85%
-
-## Troubleshooting
-
-### Model not found
-```bash
-# Copy models to flutter app
-cp ml_models/exit_detector/best.tflite flutter_app/assets/models/
-```
-
-### GPU not detected
-- Install CUDA Toolkit
-- Install cuDNN
-- Verify with: `python -c "import torch; print(torch.cuda.is_available())"`
-
-### App crashes on camera start
-- Check permissions (camera, sensors)
-- Try running on physical device instead of emulator
-- Check model file size (should be < 50MB)
-
-### Low FPS on mobile
-- Reduce image resolution (320x320 instead of 416x416)
-- Use YOLOv8n-tiny model (smaller)
-- Enable hardware acceleration in Flutter
-
-## Next Steps
-
-1. **Improve accuracy:**
-   - Collect more data from your buildings
-   - Fine-tune model with custom dataset
-   - Add more training epochs
-
-2. **Add features:**
-   - GPS integration for outdoor navigation
-   - Building floor plan overlay
-   - Audio alerts instead of visual
-   - Multi-language support
-
-3. **Optimize for performance:**
-   - Quantize models to INT8
-   - Use model pruning
-   - Profile with Android Profiler
-
-4. **Deployment:**
-   - Upload to Google Play Store
-   - Upload to Apple App Store
-   - Create installation guide for organizations
-
-## Dataset Sources
-
-All datasets are **free and public**:
-
-- **Emergency Exit Signs v2**: https://universe.roboflow.com/emergency-exit-signs/emergency-exit-signs-v2
-- **Stairs Detection**: https://universe.roboflow.com/stairs-detection/stairs-fo4v5  
-- **Escalator-Stairs**: https://universe.roboflow.com/escalatorstairsdetection/escalator-stairs
-
-## Model Architecture
-
-**YOLOv8-nano:**
-- 3.2 M parameters
-- ~6 MB model size
-- 10-15 FPS on mobile CPU
-- 25-30 FPS on mobile GPU
-
-**Input:** 416×416 RGB image  
-**Output:** Bounding boxes + class probabilities
-
-## API Keys & Configuration
-
-Create `.env` file in root (optional for advanced features):
-```
-ROBOFLOW_API_KEY=your_key_here
-MAPS_API_KEY=your_google_maps_key
-```
-
-## Support & Issues
-
-1. Check existing issues: [View issues]
-2. Create new issue with:
-   - Device model
-   - Android/iOS version
-   - Error logs
-   - Screenshots
-
-## License
-
-MIT License - Free for personal and commercial use
+| | |
+|---|---|
+| Python | 3.9 or newer |
+| Flutter | 3.10+ (only for the mobile app) |
+| Android Studio / Xcode | only for building the app |
+| GPU | optional - training works on CPU, just slower |
 
 ---
 
-**Questions?** Check the README.md for more details!
+## 1. Python side (5 minutes)
+
+```bash
+git clone https://github.com/SdSarthak/emergency-path-finder.git
+cd emergency-path-finder
+
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+pip install -r requirements.txt
+```
+
+That is all that is needed for detection and navigation - three packages, no
+torch, no TensorFlow. Verify it:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite draws its own test scenes, so it passes on a fresh clone with no
+dataset and no trained model.
+
+Then point it at a real photo:
+
+```bash
+python -m emergency_path_finder --image path/to/corridor.jpg
+```
+
+You will see `[model] no trained weights found - running on classical CV only`
+on stderr. That is expected until you train something.
+
+---
+
+## 2. Configuration
+
+```bash
+cp .env.example .env
+```
+
+Only `ROBOFLOW_API_KEY` is needed, and only for dataset downloads. Everything
+else in the file is an optional override with a sensible default. The variables
+are read from the process environment - if you want `.env` loaded automatically,
+`pip install python-dotenv` and call `load_dotenv()` in your own entry point.
+
+`.env` is gitignored. Do not commit it.
+
+---
+
+## 3. Datasets
+
+All four are free on Roboflow Universe. Sign up at <https://roboflow.com> and
+copy your key from <https://app.roboflow.com/settings/api>.
+
+```bash
+python training/download_datasets.py --list      # what is registered, what is present
+python training/download_datasets.py             # download everything
+python training/download_datasets.py exit_signs_v2 --overwrite
+```
+
+**Manual route.** If you would rather not use an API key, the script prints
+per-dataset instructions. For each one: open the Universe page, export in
+**YOLOv8** format, download the zip, and extract it so that
+`datasets/<key>/data.yaml` exists.
+
+| Key | Images | Disk |
+|---|---|---|
+| `exit_signs_v2` | ~1,070 | ~120 MB |
+| `stairs_detection` | ~7,890 | ~900 MB |
+| `escalator_stairs` | ~8,690 | ~1 GB |
+| `exit_detection` | ~36 | ~5 MB |
+
+Budget about 2 GB. Nothing under `datasets/` is committed.
+
+To keep the data off your repo drive:
+
+```bash
+export EPF_DATASETS_DIR=/mnt/big-disk/epf-datasets
+```
+
+---
+
+## 4. Training
+
+```bash
+pip install -r training/requirements.txt
+```
+
+This pulls torch, torchvision and ultralytics - a few GB. Then:
+
+```bash
+python training/train_exit_detector.py       # classes: exit, stairs, door
+python training/train_stairs_detector.py     # classes: stairs, escalator
+```
+
+Useful flags: `--epochs`, `--batch` (lower it on OOM), `--imgsz`, `--device`,
+`--name`, `--no-export`.
+
+| Hardware | 50 epochs on `exit_signs_v2` |
+|---|---|
+| NVIDIA GPU | 20-30 min |
+| CPU | 2-4 hours |
+
+Results land in `ml_models/<name>/`:
+
+```
+ml_models/exit_detector/
+├── weights/
+│   ├── best.pt          <- picked up automatically by PathFinder
+│   └── last.pt
+├── results.png
+└── confusion_matrix.png
+```
+
+### TFLite export
+
+If TensorFlow is installed the trainer also writes
+`flutter_app/assets/models/exit_detector.tflite`. It is not in
+`training/requirements.txt` because it is a large download that does not have
+wheels for every Python version:
+
+```bash
+pip install "tensorflow>=2.13,<2.17"
+```
+
+Export failure is never fatal - the `.pt` weights still work from Python. Pass
+`--no-export` to skip the attempt entirely.
+
+---
+
+## 5. Mobile app
+
+This repository versions the parts of the Flutter project worth reviewing -
+`lib/`, `test/`, `pubspec.yaml`, the Android manifest and the iOS plist - and
+not the generated Gradle/Xcode scaffolding. Generate that on first checkout:
+
+```bash
+cd flutter_app
+flutter create --platforms=android,ios --project-name emergency_path_finder .
+flutter pub get
+```
+
+`flutter create` leaves existing files alone, so your `lib/`, manifest and plist
+survive.
+
+```bash
+flutter test        # unit tests, no device needed
+flutter devices
+flutter run
+flutter build apk --release
+flutter build ios --release
+```
+
+Copy a trained model in before building:
+
+```bash
+cp ml_models/exit_detector/weights/best.tflite \
+   flutter_app/assets/models/exit_detector.tflite
+```
+
+Without it the app still launches, shows the camera and torch, and reports that
+the model is missing.
+
+---
+
+## Project structure
+
+```
+emergency-path-finder/
+├── emergency_path_finder/     # the reference implementation
+│   ├── config.py              # env-driven paths and thresholds
+│   ├── geometry.py            # BoundingBox, Detection, IoU, NMS
+│   ├── detection.py           # classical CV detectors
+│   ├── yolo_detector.py       # optional YOLOv8 wrapper
+│   ├── navigation.py          # direction, urgency, arrow angle
+│   ├── pipeline.py            # PathFinder - frame in, advice out
+│   ├── datasets.py            # Roboflow registry and downloads
+│   ├── training.py            # shared YOLOv8 training plumbing
+│   ├── visualize.py           # debug drawing
+│   └── cli.py                 # python -m emergency_path_finder
+├── training/                  # thin CLIs over the package
+│   ├── download_datasets.py
+│   ├── train_exit_detector.py
+│   ├── train_stairs_detector.py
+│   └── run_detection.py
+├── tests/                     # pytest, synthetic scenes only
+├── flutter_app/
+│   ├── lib/                   # app source
+│   └── test/                  # dart unit tests
+├── datasets/                  # gitignored
+├── ml_models/                 # gitignored
+└── docs/
+```
+
+---
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'emergency_path_finder'`**
+Run from the repository root, or `pip install -e .`. The scripts in `training/`
+add the root to `sys.path` themselves.
+
+**`cannot open video source: 0`**
+No webcam attached, or another application is holding it. Try `--camera 1`.
+
+**`no GUI backend available`**
+OpenCV cannot open a window (headless server, WSL without an X server). Add
+`--no-display`; combine with `--save out.png` to inspect the result.
+
+**Training killed / CUDA out of memory**
+Lower `--batch` (8 → 4 → 2), then `--imgsz 320`.
+
+**`ROBOFLOW_API_KEY is not set`**
+Expected without a key. Follow the printed manual download steps.
+
+**Torch does not turn on**
+The device has no flash, or another app holds the camera. Everything else keeps
+working; the button just stays grey.
+
+**Detections are noisy**
+Raise `EPF_CONFIDENCE_THRESHOLD` (default 0.35). For doors specifically, raise
+`EPF_MIN_DOOR_AREA_RATIO`.
+
+**Slow inference on the phone**
+Lower the export size (`--imgsz 320`) and retrain, or raise
+`MLDetector.confidenceThreshold` so fewer boxes reach NMS.

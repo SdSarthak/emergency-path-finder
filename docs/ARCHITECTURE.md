@@ -71,10 +71,15 @@
 
 #### Services
 **ml_detector.dart**
-- Loads TFLite model
-- Preprocesses frames (NV21 → RGB)
-- Runs inference at 10 FPS
-- Parses YOLO output (13×13 grid)
+- Loads the TFLite model from `assets/models/exit_detector.tflite`
+- Reads the interpreter's own input/output tensor shapes rather than assuming
+  them, and handles both `[1, attributes, predictions]` and
+  `[1, predictions, attributes]` layouts
+- Converts frames: YUV420 on Android, BGRA8888 on iOS
+- Decodes YOLOv8 anchor-free output (4 box values + one score per class,
+  no separate objectness), then applies per-label NMS
+- Sniffs whether box coordinates are normalised or in input-pixel units
+- Returns an empty result rather than throwing when anything fails
 
 **navigation_service.dart**
 - Calculates arrow angle from detections
@@ -104,40 +109,55 @@ Free datasets from Roboflow:
 - Exit-Detection: 36 images (doors, obstacles)
 ```
 
-#### Training: `train_exit_detector.py`
+#### Training: `train_exit_detector.py`, `train_stairs_detector.py`
+Thin CLIs over `emergency_path_finder/training.py`, which owns the shared
+plumbing (device selection, `data.yaml` generation, TFLite export).
+
 ```
-YOLOv8-nano architecture:
-- Input: 416×416 RGB image
-- Output: 13×13 grid × 25 values
-  - 4 bbox coords (bx, by, bw, bh)
-  - 1 objectness score
-  - 3 class probabilities (exit, stairs, door)
-  - 17 other values (anchor boxes, etc.)
+YOLOv8-nano, anchor-free:
+- Input:  416×416 RGB, normalised to 0..1
+- Output: [1, 4 + num_classes, 3549] at 416px
+          4 box values (cx, cy, w, h) + one score per class.
+          There is no separate objectness term in YOLOv8.
 ```
 
 Hyperparameters:
-- Epochs: 50
-- Batch size: 8
-- Learning rate: 0.01
-- Optimizer: SGD
-- Data augmentation: Random flip, rotation, crop
+- Epochs: 50 (`--epochs`), batch 8 (`--batch`), SGD, lr0 0.01
+- AMP only on CUDA - it is unstable on CPU builds
+- `hsv_v=0.6`: signage has to be findable across a wide brightness range
+- `flipud=0.0`: an exit arrow pointing left is not the same sign upside down
 
-#### Fallback Detection: `fallback_detection.py`
-Works when ML fails (low light, no signs):
-- **detect_doors()**: Edge detection + morphology
-- **detect_stairs_edges()**: Hough line transform for diagonal patterns
-- **detect_color_signs()**: HSV color thresholding (green/red)
-- **detect_vanishing_point()**: Line intersections → perspective center
-- **detect_light_sources()**: Brightness thresholding for lights
-- **estimate_depth_map()**: Edge density as proxy
+#### Classical fallbacks: `emergency_path_finder/detection.py`
+Always run, whether or not a model is loaded:
+- **detect_color_signs()** - HSV segmentation for green/red signage, scored by
+  how completely the colour fills its bounding box
+- **detect_doors()** - CLAHE + Canny + a vertical morphology kernel, scored
+  against the proportions of a standard doorway (~2.1 aspect ratio)
+- **detect_stairs_edges()** - Hough segments filtered to near-horizontal tread
+  edges, grouped into runs; a run needs `stairs_min_treads` distinct rows,
+  which is what separates a staircase from a skirting board
+- **detect_vanishing_point()** - pairwise intersections of oblique lines voted
+  into a coarse grid; the densest cell wins. Averaging every intersection (the
+  naive version) is dominated by near-parallel outliers
+- **detect_light_sources()** - brightness thresholding, area-filtered
+- **estimate_relative_depth()** - ground-plane prior blended with local detail;
+  a nearness heuristic, not depth
+- **estimate_light_quality()** - brightness and contrast combined, so a
+  uniformly grey smoke-filled frame scores low despite being bright
 
-#### Testing: `test_detection.py`
+#### Fusion: `emergency_path_finder/pipeline.py`
+`PathFinder.analyze(frame)` runs the model (if any) plus every fallback, gives
+model detections a small confidence bonus, de-duplicates with NMS, and hands the
+survivors to `NavigationHelper.advise()`.
+
+#### CLI: `python -m emergency_path_finder`
 ```bash
-python test_detection.py --image <path>      # Single image
-python test_detection.py --video <path>      # Video file
-python test_detection.py --camera             # Webcam
-python test_detection.py --benchmark <path>   # Speed test
+python -m emergency_path_finder --image <path>       # Single image
+python -m emergency_path_finder --video <path>       # Video file
+python -m emergency_path_finder --camera             # Webcam
+python -m emergency_path_finder --benchmark <path>   # Per-stage timing
 ```
+`training/run_detection.py` is a wrapper around the same entry point.
 
 ## Data Flow
 
@@ -289,40 +309,57 @@ Ratio      → Distance
 
 ### Quick Start
 ```bash
-# Install dependencies
-cd training && pip install -r requirements.txt
+# Detection and navigation only - three packages, no torch
+pip install -r requirements.txt
+python -m emergency_path_finder --camera
 
-# Download datasets
-python download_datasets.py
+# Training extras
+pip install -r training/requirements.txt
+python training/download_datasets.py
+python training/train_exit_detector.py       # 2-4 h on CPU, 20 min on GPU
 
-# Train model (2-4 hours on CPU, 20 min on GPU)
-python train_exit_detector.py
-
-# Test detection
-python test_detection.py --camera
-
-# Build mobile app
-cd ../flutter_app
-flutter pub get
-flutter run
+# Mobile app
+cd flutter_app
+flutter create --platforms=android,ios --project-name emergency_path_finder .
+flutter pub get && flutter run
 ```
 
 ### Directory Structure
 ```
-Emergency path finder/
-├── flutter_app/              # Mobile app (iOS/Android)
-├── ml_models/                # Trained models
-├── datasets/                 # Downloaded datasets
-├── training/                 # Training scripts
+emergency-path-finder/
+├── emergency_path_finder/    # reference implementation (importable)
+│   ├── config.py             # env-driven paths and thresholds
+│   ├── geometry.py           # BoundingBox, Detection, IoU, NMS
+│   ├── detection.py          # classical CV detectors
+│   ├── yolo_detector.py      # optional YOLOv8 wrapper
+│   ├── navigation.py         # direction, urgency, arrow angle
+│   ├── pipeline.py           # PathFinder - frame in, advice out
+│   ├── datasets.py           # Roboflow registry and downloads
+│   ├── training.py           # shared YOLOv8 training plumbing
+│   ├── visualize.py          # debug drawing
+│   └── cli.py                # python -m emergency_path_finder
+├── training/                 # thin CLIs over the package
 │   ├── download_datasets.py
 │   ├── train_exit_detector.py
-│   ├── fallback_detection.py
-│   ├── test_detection.py
+│   ├── train_stairs_detector.py
+│   ├── run_detection.py
 │   └── requirements.txt
+├── tests/                    # pytest, synthetic scenes only
+├── flutter_app/              # mobile app (lib/ + test/)
+├── ml_models/                # gitignored - training output
+├── datasets/                 # gitignored - downloaded data
 └── docs/
-    ├── SETUP.md             # Setup guide
-    └── ARCHITECTURE.md      # This file
+    ├── SETUP.md              # setup guide
+    └── ARCHITECTURE.md       # this file
 ```
+
+### Why the logic exists twice
+
+`navigation.py` and `navigation_service.dart` implement the same rules. The
+Python version is the reference: it is tested against synthetic scenes on every
+commit, so a threshold change can be validated in seconds instead of by
+rebuilding an APK and walking down a corridor. The Dart version is a
+transcription, covered by matching unit tests in `flutter_app/test/`.
 
 ## Future Enhancements
 

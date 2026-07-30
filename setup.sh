@@ -1,81 +1,74 @@
-#!/bin/bash
-# Quick start script for Emergency Path Finder
+#!/usr/bin/env bash
+# Quick start for Emergency Path Finder.
+#
+#   ./setup.sh            core install + tests
+#   ./setup.sh --train    also install the training extras (torch, ultralytics)
+set -euo pipefail
 
-echo "╔════════════════════════════════════════════════════════╗"
-echo "║   Emergency Path Finder - Quick Start Setup            ║"
-echo "╚════════════════════════════════════════════════════════╝"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+WITH_TRAINING=0
+for arg in "$@"; do
+  case "$arg" in
+    --train) WITH_TRAINING=1 ;;
+    -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
-# Check Python
-echo -e "\n${BLUE}[1/5] Checking Python...${NC}"
-if command -v python3 &> /dev/null; then
-    PYTHON_VERSION=$(python3 --version)
-    echo -e "${GREEN}✓ $PYTHON_VERSION${NC}"
-else
-    echo -e "${RED}✗ Python not found. Please install Python 3.8+${NC}"
-    exit 1
+PYTHON="${PYTHON:-python3}"
+command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
+command -v "$PYTHON" >/dev/null 2>&1 || {
+  echo "Python 3.9+ is required but was not found." >&2
+  exit 1
+}
+
+echo "==> Python: $($PYTHON --version)"
+
+echo "==> Installing core dependencies"
+"$PYTHON" -m pip install --quiet --upgrade pip
+"$PYTHON" -m pip install --quiet -r requirements.txt -r requirements-dev.txt
+
+if [ "$WITH_TRAINING" -eq 1 ]; then
+  echo "==> Installing training extras (this downloads several GB)"
+  "$PYTHON" -m pip install -r training/requirements.txt
 fi
 
-# Check Flutter
-echo -e "\n${BLUE}[2/5] Checking Flutter...${NC}"
-if command -v flutter &> /dev/null; then
-    FLUTTER_VERSION=$(flutter --version | head -1)
-    echo -e "${GREEN}✓ $FLUTTER_VERSION${NC}"
-else
-    echo -e "${YELLOW}⚠ Flutter not found. You can install it from https://flutter.dev${NC}"
-fi
-
-# Setup Python environment
-echo -e "\n${BLUE}[3/5] Installing Python dependencies...${NC}"
-cd training
-if python3 -m pip install -r requirements.txt --quiet; then
-    echo -e "${GREEN}✓ Dependencies installed${NC}"
-else
-    echo -e "${RED}✗ Failed to install dependencies${NC}"
-    exit 1
-fi
-cd ..
-
-# Create necessary directories
-echo -e "\n${BLUE}[4/5] Creating directories...${NC}"
+echo "==> Creating working directories"
 mkdir -p datasets ml_models flutter_app/assets/models
-echo -e "${GREEN}✓ Directories created${NC}"
 
-# Summary
-echo -e "\n${BLUE}[5/5] Setup complete!${NC}"
+if [ ! -f .env ]; then
+  cp .env.example .env
+  echo "==> Wrote .env from .env.example - add your ROBOFLOW_API_KEY to it"
+fi
 
-echo -e "\n${GREEN}════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}NEXT STEPS:${NC}"
-echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
+echo "==> Running the test suite"
+"$PYTHON" -m pytest -q
 
-echo -e "\n1. ${YELLOW}Download Datasets${NC}"
-echo "   cd training"
-echo "   python3 download_datasets.py"
-echo "   (Follow instructions to download from Roboflow)"
+if command -v flutter >/dev/null 2>&1; then
+  echo "==> Flutter: $(flutter --version | head -1)"
+else
+  echo "==> Flutter not found - skip this unless you are building the app"
+fi
 
-echo -e "\n2. ${YELLOW}Train ML Model (Optional)${NC}"
-echo "   python3 train_exit_detector.py"
-echo "   (Takes 2-4 hours on CPU, 20 mins on GPU)"
+cat <<'NEXT'
 
-echo -e "\n3. ${YELLOW}Test Detection${NC}"
-echo "   python3 test_detection.py --camera"
-echo "   (Test on webcam)"
+Setup complete.
 
-echo -e "\n4. ${YELLOW}Build Mobile App${NC}"
-echo "   cd ../flutter_app"
-echo "   flutter pub get"
-echo "   flutter run"
+Try it right now, no model or dataset needed:
+  python -m emergency_path_finder --image <photo.jpg>
+  python -m emergency_path_finder --camera
 
-echo -e "\n${GREEN}════════════════════════════════════════════════════════${NC}"
-echo -e "\nDocumentation:"
-echo "  - Setup Guide: docs/SETUP.md"
-echo "  - Architecture: docs/ARCHITECTURE.md"
-echo "  - README: README.md"
+Then, to train your own detector:
+  ./setup.sh --train
+  python training/download_datasets.py        # needs ROBOFLOW_API_KEY
+  python training/train_exit_detector.py
 
-echo -e "\n${GREEN}Happy coding! 🚀${NC}\n"
+And for the mobile app:
+  cd flutter_app
+  flutter create --platforms=android,ios --project-name emergency_path_finder .
+  flutter pub get && flutter run
+
+Docs: README.md, QUICK_REFERENCE.md, docs/SETUP.md, docs/ARCHITECTURE.md
+NEXT
