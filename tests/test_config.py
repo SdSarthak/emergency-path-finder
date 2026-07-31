@@ -46,6 +46,64 @@ def test_bad_numeric_env_var_fails_loudly(monkeypatch):
         DetectorConfig.from_env()
 
 
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf"])
+def test_non_finite_thresholds_are_rejected(monkeypatch, raw):
+    # float("nan") parses fine, and `confidence < nan` is always False - every
+    # blob in the frame would pass the filter with no error anywhere.
+    monkeypatch.setenv("EPF_CONFIDENCE_THRESHOLD", raw)
+    with pytest.raises(ValueError, match="finite"):
+        DetectorConfig.from_env()
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("EPF_CONFIDENCE_THRESHOLD", "-0.2"),
+        ("EPF_CONFIDENCE_THRESHOLD", "1.5"),
+        ("EPF_NMS_IOU_THRESHOLD", "2"),
+        ("EPF_BRIGHTNESS_THRESHOLD", "300"),
+        ("EPF_BRIGHTNESS_THRESHOLD", "-1"),
+        ("EPF_MIN_SIGN_AREA_RATIO", "-0.1"),
+        ("EPF_MIN_DOOR_AREA_RATIO", "4"),
+    ],
+)
+def test_out_of_range_thresholds_are_rejected(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        DetectorConfig.from_env()
+
+
+def test_inverted_canny_bounds_are_rejected():
+    with pytest.raises(ValueError, match="canny_low"):
+        DetectorConfig(canny_low=200, canny_high=100)
+
+
+def test_inverted_door_aspect_bounds_are_rejected():
+    with pytest.raises(ValueError, match="door_min_aspect_ratio"):
+        DetectorConfig(door_min_aspect_ratio=5.0, door_max_aspect_ratio=1.4)
+
+
+def test_a_single_line_cannot_be_declared_a_staircase():
+    with pytest.raises(ValueError, match="stairs_min_treads"):
+        DetectorConfig(stairs_min_treads=1)
+
+
+@pytest.mark.parametrize("size", [0, -416, 100, 33])
+def test_input_size_must_be_a_multiple_of_thirty_two(size):
+    with pytest.raises(ValueError, match="input_size"):
+        Settings(input_size=size)
+
+
+def test_input_size_is_overridable_within_the_rules(monkeypatch):
+    monkeypatch.setenv("EPF_INPUT_SIZE", "640")
+    assert get_settings().input_size == 640
+
+
+def test_the_defaults_themselves_are_valid():
+    assert DetectorConfig().confidence_threshold == 0.35
+    assert Settings().input_size % 32 == 0
+
+
 def test_api_key_is_read_from_the_environment(monkeypatch):
     monkeypatch.setenv("ROBOFLOW_API_KEY", "rf_test_key")
     assert get_settings().roboflow_api_key == "rf_test_key"

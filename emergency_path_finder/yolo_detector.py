@@ -59,10 +59,11 @@ def normalize_label(label: str) -> str:
     the detection list for debugging but will never be chosen as a navigation
     target.
     """
-    key = str(label).strip().lower().replace("_", " ")
-    if key in _LABEL_ALIASES:
-        return _LABEL_ALIASES[key]
-    return _LABEL_ALIASES.get(key.replace(" ", "-"), key)
+    cleaned = str(label).strip().lower()
+    for key in (cleaned, cleaned.replace("_", " "), cleaned.replace("_", "-")):
+        if key in _LABEL_ALIASES:
+            return _LABEL_ALIASES[key]
+    return cleaned
 
 
 def model_class_names(model: object, fallback: Sequence[str] = CLASS_NAMES) -> List[str]:

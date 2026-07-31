@@ -89,3 +89,55 @@ def test_analyze_is_deterministic(finder):
 def test_analyze_rejects_a_malformed_frame(finder):
     with pytest.raises((ValueError, TypeError)):
         finder.analyze(np.zeros((10, 10), dtype=np.uint8))
+
+
+def test_analyze_rejects_a_zero_sized_frame(finder):
+    with pytest.raises(ValueError):
+        finder.analyze(np.zeros((0, 640, 3), dtype=np.uint8))
+
+
+def test_a_one_pixel_frame_does_not_crash(finder):
+    advice = finder.analyze(np.zeros((1, 1, 3), dtype=np.uint8))
+    assert advice.direction in Direction.ALL
+
+
+# --------------------------------------------------------- single-pass API ---
+def test_analyze_frame_runs_the_detectors_once(finder, monkeypatch):
+    """The CLI used to call detect() and analyze() in sequence.
+
+    analyze() calls detect() itself, so every frame ran every classical
+    detector twice - and would have run inference twice with a model loaded.
+    """
+    calls = []
+    original = finder.fallback.detect_all
+    monkeypatch.setattr(
+        finder.fallback,
+        "detect_all",
+        lambda frame: (calls.append(1), original(frame))[1],
+    )
+    frame = draw_exit_sign(blank_frame(), center=(560, 140))
+    finder.analyze_frame(frame)
+    assert len(calls) == 1
+
+
+def test_analyze_frame_agrees_with_analyze(finder):
+    frame = draw_door(draw_exit_sign(blank_frame(), (560, 140)), center_x=180)
+    analysis = finder.analyze_frame(frame)
+    assert analysis.advice.as_dict() == finder.analyze(frame).as_dict()
+    assert analysis.detections, "the boxes must come back with the advice"
+    assert analysis.light_quality == analysis.advice.light_quality
+
+
+def test_frame_analysis_reports_the_torch_the_same_way(finder, dark):
+    analysis = finder.analyze_frame(dark)
+    assert analysis.torch_advised is finder.should_enable_torch(dark)
+
+
+def test_an_explicit_missing_model_path_is_reported(tmp_path):
+    pipeline = PathFinder(
+        settings=Settings(project_root=tmp_path, models_dir=tmp_path / "ml_models"),
+        model_path=tmp_path / "typo.pt",
+        use_model=True,
+    )
+    assert pipeline.uses_model is False
+    assert "typo.pt" in pipeline.model_error

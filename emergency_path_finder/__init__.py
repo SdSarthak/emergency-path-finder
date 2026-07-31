@@ -17,7 +17,7 @@ from .config import DetectorConfig, Settings, get_settings
 from .detection import FallbackDetector, enhance_low_light, estimate_light_quality
 from .geometry import BoundingBox, Detection, LightSource, iou, non_max_suppression
 from .navigation import Direction, NavigationAdvice, NavigationHelper, Urgency
-from .pipeline import PathFinder
+from .pipeline import FrameAnalysis, PathFinder
 
 __version__ = "1.0.0"
 
@@ -27,6 +27,7 @@ __all__ = [
     "DetectorConfig",
     "Direction",
     "FallbackDetector",
+    "FrameAnalysis",
     "LightSource",
     "NavigationAdvice",
     "NavigationHelper",

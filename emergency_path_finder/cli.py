@@ -167,13 +167,19 @@ def _write_image(path: str, canvas: np.ndarray) -> None:
     destination = Path(path)
     if destination.parent != Path(""):
         destination.parent.mkdir(parents=True, exist_ok=True)
-    # imwrite returns False (it does not raise) for an unknown extension or an
-    # unwritable directory, which used to look like a successful save.
-    if not cv2.imwrite(str(destination), canvas):
-        raise SystemExit(
-            f"could not write {destination} - check the extension is one OpenCV "
-            f"supports (.png, .jpg) and that the directory is writable"
-        )
+    # Depending on the build, imwrite either returns False or raises for an
+    # unknown extension or an unwritable directory. The False branch used to
+    # look exactly like a successful save.
+    message = (
+        f"could not write {destination} - check the extension is one OpenCV "
+        f"supports (.png, .jpg) and that the directory is writable"
+    )
+    try:
+        written = cv2.imwrite(str(destination), canvas)
+    except cv2.error as exc:
+        raise SystemExit(f"{message} ({exc.err.strip() if exc.err else exc})") from None
+    if not written:
+        raise SystemExit(message)
 
 
 def run_image(args: argparse.Namespace) -> int:

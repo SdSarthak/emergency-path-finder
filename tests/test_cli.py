@@ -70,6 +70,167 @@ def test_missing_image_exits_cleanly(tmp_path):
         main(["--image", str(tmp_path / "nope.png"), "--no-model", "--no-display"])
 
 
+def test_an_undecodable_file_is_distinguished_from_a_missing_one(tmp_path):
+    corrupt = tmp_path / "corrupt.png"
+    corrupt.write_bytes(b"this is not a png")
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--image", str(corrupt), "--no-model", "--no-display"])
+    assert "decode" in str(excinfo.value)
+
+
+def test_a_directory_is_not_mistaken_for_an_image(tmp_path):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--image", str(tmp_path), "--no-model", "--no-display"])
+    assert "directory" in str(excinfo.value)
+
+
+def test_a_missing_model_path_is_fatal_not_silently_ignored(sample_image, tmp_path):
+    # Falling back to classical CV here hands the user fallback output that
+    # reads exactly like model output.
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "--image",
+                str(sample_image),
+                "--model",
+                str(tmp_path / "absent.pt"),
+                "--no-display",
+            ]
+        )
+    assert "absent.pt" in str(excinfo.value)
+
+
+def test_model_and_no_model_together_are_rejected(sample_image, tmp_path):
+    weights = tmp_path / "weights.pt"
+    weights.write_bytes(b"not-a-checkpoint")
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--image",
+                str(sample_image),
+                "--model",
+                str(weights),
+                "--no-model",
+                "--no-display",
+            ]
+        )
+
+
+@pytest.mark.parametrize("flag", ["--every", "--iterations"])
+@pytest.mark.parametrize("value", ["0", "-1", "half"])
+def test_non_positive_counts_are_rejected(flag, value):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--image", "a.png", flag, value])
+
+
+def test_json_output_stays_parseable_when_saving(sample_image, tmp_path, capsys):
+    # The "Saved:" line used to go to stdout, so `... --json | jq` broke.
+    output = tmp_path / "annotated.png"
+    main(
+        [
+            "--image",
+            str(sample_image),
+            "--no-model",
+            "--no-display",
+            "--json",
+            "--save",
+            str(output),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["counts"]["exit"] >= 1
+    assert "Saved" in captured.err
+    assert output.exists()
+
+
+def test_an_unwritable_save_target_is_reported(sample_image, tmp_path):
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "--image",
+                str(sample_image),
+                "--no-model",
+                "--no-display",
+                "--save",
+                str(tmp_path / "out.unsupported"),
+            ]
+        )
+    assert "could not write" in str(excinfo.value)
+
+
+# ------------------------------------------------------------------ video ---
+@pytest.fixture
+def sample_video(tmp_path):
+    """A short synthetic clip with an exit sign drifting across the frame."""
+    path = tmp_path / "clip.avi"
+    writer = cv2.VideoWriter(
+        str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10.0, (640, 480)
+    )
+    if not writer.isOpened():
+        pytest.skip("no MJPG video writer in this OpenCV build")
+    try:
+        for index in range(6):
+            writer.write(draw_exit_sign(blank_frame(), center=(200 + index * 50, 140)))
+    finally:
+        writer.release()
+    return path
+
+
+def test_video_run_emits_one_json_object_per_analysed_frame(sample_video, capsys):
+    assert (
+        main(
+            [
+                "--video",
+                str(sample_video),
+                "--no-model",
+                "--no-display",
+                "--json",
+                "--every",
+                "2",
+            ]
+        )
+        == 0
+    )
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines, "the video loop produced no advice at all"
+    for line in lines:
+        payload = json.loads(line)
+        assert payload["direction"] in {"LEFT", "RIGHT", "STRAIGHT", "FORWARD"}
+    # 6 frames, analysed on frame 1 then every 2nd frame.
+    assert len(lines) == 4
+
+
+def test_video_run_writes_an_annotated_copy(sample_video, tmp_path):
+    output = tmp_path / "out" / "annotated.avi"
+    assert (
+        main(
+            [
+                "--video",
+                str(sample_video),
+                "--no-model",
+                "--no-display",
+                "--save",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert output.exists() and output.stat().st_size > 0
+    capture = cv2.VideoCapture(str(output))
+    try:
+        assert capture.isOpened()
+        ok, frame = capture.read()
+        assert ok and frame is not None
+    finally:
+        capture.release()
+
+
+def test_an_unopenable_video_source_exits_cleanly(tmp_path):
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--video", str(tmp_path / "absent.mp4"), "--no-model", "--no-display"])
+    assert "cannot open" in str(excinfo.value)
+
+
 def test_benchmark_reports_every_stage(sample_image, capsys):
     assert (
         main(
