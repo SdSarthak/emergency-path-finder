@@ -21,9 +21,7 @@ LABEL_COLORS = {
 _DEFAULT_COLOR = (200, 200, 200)
 
 
-def draw_detections(image: np.ndarray, detections: Sequence[Detection]) -> np.ndarray:
-    """Draw labelled boxes onto a copy of ``image``."""
-    canvas = image.copy()
+def _draw_detections_inplace(canvas: np.ndarray, detections: Sequence[Detection]) -> None:
     for detection in detections:
         color = LABEL_COLORS.get(detection.label, _DEFAULT_COLOR)
         x1, y1, x2, y2 = detection.box.as_xyxy()
@@ -41,13 +39,23 @@ def draw_detections(image: np.ndarray, detections: Sequence[Detection]) -> np.nd
             2,
             cv2.LINE_AA,
         )
+
+
+def draw_detections(image: np.ndarray, detections: Sequence[Detection]) -> np.ndarray:
+    """Draw labelled boxes onto a copy of ``image``."""
+    canvas = image.copy()
+    _draw_detections_inplace(canvas, detections)
     return canvas
+
+
+def _draw_lights_inplace(canvas: np.ndarray, lights: Sequence[LightSource]) -> None:
+    for light in lights:
+        cv2.circle(canvas, (int(light.x), int(light.y)), 10, (255, 255, 0), 2)
 
 
 def draw_lights(image: np.ndarray, lights: Sequence[LightSource]) -> np.ndarray:
     canvas = image.copy()
-    for light in lights:
-        cv2.circle(canvas, (light.x, light.y), 10, (255, 255, 0), 2)
+    _draw_lights_inplace(canvas, lights)
     return canvas
 
 
@@ -63,17 +71,17 @@ def _draw_arrow(canvas: np.ndarray, angle_deg: float) -> None:
     cv2.arrowedLine(canvas, center, tip, (0, 255, 128), 4, tipLength=0.3)
 
 
-def draw_advice(
-    image: np.ndarray,
+def _draw_advice_inplace(
+    canvas: np.ndarray,
     advice: NavigationAdvice,
     vanishing_point: Optional[Tuple[float, float]] = None,
-) -> np.ndarray:
-    """Overlay the arrow, instruction banner and urgency badge."""
-    canvas = image.copy()
+) -> None:
     _draw_arrow(canvas, advice.arrow_angle_deg)
 
     point = vanishing_point or advice.vanishing_point
-    if point is not None:
+    if point is not None and all(np.isfinite(point)):
+        # A marker at a NaN/inf coordinate raises deep inside OpenCV; the
+        # vanishing point is a division result and can be either.
         cv2.drawMarker(
             canvas,
             (int(point[0]), int(point[1])),
@@ -93,6 +101,16 @@ def draw_advice(
         canvas, advice.instruction, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
         (200, 220, 255), 1, cv2.LINE_AA,
     )
+
+
+def draw_advice(
+    image: np.ndarray,
+    advice: NavigationAdvice,
+    vanishing_point: Optional[Tuple[float, float]] = None,
+) -> np.ndarray:
+    """Overlay the arrow, instruction banner and urgency badge."""
+    canvas = image.copy()
+    _draw_advice_inplace(canvas, advice, vanishing_point)
     return canvas
 
 
@@ -102,8 +120,13 @@ def render(
     advice: NavigationAdvice,
     lights: Sequence[LightSource] = (),
 ) -> np.ndarray:
-    """One-call debug view: boxes + lights + navigation overlay."""
-    canvas = draw_detections(image, detections)
-    if lights:
-        canvas = draw_lights(canvas, lights)
-    return draw_advice(canvas, advice)
+    """One-call debug view: boxes + lights + navigation overlay.
+
+    One copy of the frame, not three: this runs once per displayed video frame,
+    and at 1080p the two extra copies were ~12 MB of churn per frame.
+    """
+    canvas = image.copy()
+    _draw_detections_inplace(canvas, detections)
+    _draw_lights_inplace(canvas, lights)
+    _draw_advice_inplace(canvas, advice)
+    return canvas

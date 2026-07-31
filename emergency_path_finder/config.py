@@ -6,6 +6,7 @@ overridden with an environment variable (see ``.env.example``).
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,9 +27,22 @@ def _env_float(name: str, default: float) -> float:
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number, got {raw!r}") from exc
+    if not math.isfinite(value):
+        # "nan" parses happily as a float, and a NaN threshold silently disables
+        # every comparison that uses it - every detection would pass the filter.
+        raise ValueError(f"{name} must be a finite number, got {raw!r}")
+    return value
+
+
+def _check_range(name: str, value: float, low: float, high: float) -> None:
+    """Reject NaN/inf and out-of-range tunables at construction time."""
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    if not low <= value <= high:
+        raise ValueError(f"{name} must be in [{low}, {high}], got {value!r}")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -62,6 +76,45 @@ class DetectorConfig:
     nms_iou_threshold: float = 0.45
     confidence_threshold: float = 0.35
 
+    def __post_init__(self) -> None:
+        """Fail loudly on a nonsensical override.
+
+        Without this an ``EPF_CONFIDENCE_THRESHOLD=-1`` keeps every blob in the
+        frame and ``canny_low > canny_high`` inverts hysteresis - both produce
+        plausible-looking but wrong output rather than an error.
+        """
+        for name in (
+            "min_sign_area_ratio",
+            "min_door_area_ratio",
+            "min_light_area_ratio",
+        ):
+            _check_range(name, getattr(self, name), 0.0, 1.0)
+        _check_range("confidence_threshold", self.confidence_threshold, 0.0, 1.0)
+        _check_range("nms_iou_threshold", self.nms_iou_threshold, 0.0, 1.0)
+        _check_range("brightness_threshold", self.brightness_threshold, 0, 255)
+        _check_range("canny_low", self.canny_low, 0, 255)
+        _check_range("canny_high", self.canny_high, 0, 255)
+        _check_range("door_min_aspect_ratio", self.door_min_aspect_ratio, 0.0, 100.0)
+        _check_range("door_max_aspect_ratio", self.door_max_aspect_ratio, 0.0, 100.0)
+        _check_range(
+            "stairs_max_tread_angle_deg", self.stairs_max_tread_angle_deg, 0.0, 90.0
+        )
+        if self.canny_low >= self.canny_high:
+            raise ValueError(
+                f"canny_low must be below canny_high, got "
+                f"{self.canny_low} >= {self.canny_high}"
+            )
+        if self.door_min_aspect_ratio >= self.door_max_aspect_ratio:
+            raise ValueError(
+                f"door_min_aspect_ratio must be below door_max_aspect_ratio, got "
+                f"{self.door_min_aspect_ratio} >= {self.door_max_aspect_ratio}"
+            )
+        if self.stairs_min_treads < 2:
+            raise ValueError(
+                f"stairs_min_treads must be at least 2 - a single line is not a "
+                f"staircase, got {self.stairs_min_treads}"
+            )
+
     @classmethod
     def from_env(cls) -> "DetectorConfig":
         return cls(
@@ -87,6 +140,16 @@ class Settings:
     roboflow_api_key: Optional[str] = None
     input_size: int = 416
     detector: DetectorConfig = field(default_factory=DetectorConfig)
+
+    def __post_init__(self) -> None:
+        # YOLO downsamples by 32; anything smaller (or negative, from a typo'd
+        # EPF_INPUT_SIZE) is silently rounded up by ultralytics or crashes the
+        # export, so reject it here where the message can name the variable.
+        if self.input_size < 32 or self.input_size % 32 != 0:
+            raise ValueError(
+                f"input_size must be a positive multiple of 32 (EPF_INPUT_SIZE), "
+                f"got {self.input_size}"
+            )
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -115,10 +178,18 @@ class Settings:
             return self.model_path if self.model_path.exists() else None
         if not self.models_dir.exists():
             return None
+
+        def mtime(path: Path) -> float:
+            # A training run writing into models_dir can remove a checkpoint
+            # between the glob and the stat; treat that as "oldest" rather than
+            # letting an OSError escape from what is only a lookup.
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return float("-inf")
+
         candidates = sorted(
-            self.models_dir.glob("**/weights/best.pt"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
+            self.models_dir.glob("**/weights/best.pt"), key=mtime, reverse=True
         )
         return candidates[0] if candidates else None
 

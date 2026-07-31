@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Tuple
+from typing import List, Sequence, Tuple
 
 __all__ = ["BoundingBox", "Detection", "LightSource", "iou", "non_max_suppression"]
 
@@ -140,20 +140,3 @@ def non_max_suppression(
             continue
         kept.append(candidate)
     return kept
-
-
-def merge_overlapping(boxes: Iterable[BoundingBox], iou_threshold: float = 0.3) -> List[BoundingBox]:
-    """Collapse boxes that overlap into their union.
-
-    Used for stair treads, where a dozen individual line segments describe one
-    physical staircase.
-    """
-    merged: List[BoundingBox] = []
-    for box in sorted(boxes, key=lambda b: b.area, reverse=True):
-        for index, existing in enumerate(merged):
-            if iou(existing, box) > iou_threshold:
-                merged[index] = existing.union(box)
-                break
-        else:
-            merged.append(box)
-    return merged

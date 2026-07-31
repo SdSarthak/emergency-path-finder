@@ -8,16 +8,79 @@ package runs without them.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
 from .geometry import BoundingBox, Detection
 
-__all__ = ["YoloDetector", "CLASS_NAMES", "ultralytics_available"]
+__all__ = [
+    "YoloDetector",
+    "CLASS_NAMES",
+    "normalize_label",
+    "model_class_names",
+    "ultralytics_available",
+]
 
 #: Class order used by the training configs; index must match ``data.yaml``.
 CLASS_NAMES: Sequence[str] = ("exit", "stairs", "door")
+
+#: The navigation layer only understands these three labels. Public datasets
+#: spell them a dozen ways, and a stairs model trained from Roboflow emits
+#: ``escalator`` - mapped here rather than being dropped or, worse, passed
+#: through as an unknown label that ``select_target`` silently ignores.
+_LABEL_ALIASES: Dict[str, str] = {
+    "exit": "exit",
+    "exits": "exit",
+    "exit-sign": "exit",
+    "exit sign": "exit",
+    "exitsign": "exit",
+    "emergency exit": "exit",
+    "emergency-exit": "exit",
+    "fire exit": "exit",
+    "stair": "stairs",
+    "stairs": "stairs",
+    "staircase": "stairs",
+    "stairway": "stairs",
+    "steps": "stairs",
+    "escalator": "stairs",
+    "escalators": "stairs",
+    "door": "door",
+    "doors": "door",
+    "doorway": "door",
+    "gate": "door",
+}
+
+
+def normalize_label(label: str) -> str:
+    """Map a dataset class name onto the pipeline vocabulary.
+
+    Unknown labels are returned lower-cased and unchanged; they survive into
+    the detection list for debugging but will never be chosen as a navigation
+    target.
+    """
+    key = str(label).strip().lower().replace("_", " ")
+    if key in _LABEL_ALIASES:
+        return _LABEL_ALIASES[key]
+    return _LABEL_ALIASES.get(key.replace(" ", "-"), key)
+
+
+def model_class_names(model: object, fallback: Sequence[str] = CLASS_NAMES) -> List[str]:
+    """Read the class names a trained checkpoint carries with it.
+
+    Ultralytics stores ``names`` as ``{index: name}``. Trusting the hardcoded
+    ``CLASS_NAMES`` instead is how a stairs model (classes ``stairs``,
+    ``escalator``) ends up reporting an ``exit`` that is not there.
+    """
+    names = getattr(model, "names", None)
+    if isinstance(names, dict) and names:
+        try:
+            return [str(names[key]) for key in sorted(names, key=int)]
+        except (KeyError, TypeError, ValueError):
+            return [str(value) for value in names.values()]
+    if isinstance(names, (list, tuple)) and names:
+        return [str(value) for value in names]
+    return list(fallback)
 
 
 def ultralytics_available() -> bool:
@@ -57,9 +120,12 @@ class YoloDetector:
 
         self.confidence_threshold = confidence_threshold
         self.input_size = input_size
-        self.class_names = tuple(class_names)
         self.device = device
         self._model = YOLO(str(self.weights))
+        # The checkpoint's own class list wins over the caller's default: the
+        # two only agree when the model happens to have been trained on the
+        # exit dataset, and a mismatch silently relabels every detection.
+        self.class_names = tuple(model_class_names(self._model, class_names))
 
     def detect(self, image: np.ndarray) -> List[Detection]:
         """Return detections for one BGR frame."""
@@ -83,13 +149,13 @@ class YoloDetector:
                 class_index = int(box.cls.item())
                 label = (
                     self.class_names[class_index]
-                    if class_index < len(self.class_names)
+                    if 0 <= class_index < len(self.class_names)
                     else f"class_{class_index}"
                 )
                 x1, y1, x2, y2 = (float(v) for v in box.xyxy[0].tolist())
                 detections.append(
                     Detection(
-                        label=label,
+                        label=normalize_label(label),
                         confidence=float(box.conf.item()),
                         box=BoundingBox.from_xyxy(x1, y1, x2, y2),
                         source="yolo",

@@ -8,6 +8,7 @@ exactly the thing that fails in a real emergency.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -15,11 +16,35 @@ import numpy as np
 
 from .config import Settings, get_settings
 from .detection import FallbackDetector, estimate_light_quality
-from .geometry import Detection, non_max_suppression
+from .geometry import Detection, LightSource, non_max_suppression
 from .navigation import NavigationAdvice, NavigationHelper
 from .yolo_detector import YoloDetector, ultralytics_available
 
-__all__ = ["PathFinder"]
+__all__ = ["PathFinder", "FrameAnalysis"]
+
+#: Below this light-quality score the app should turn the torch on.
+TORCH_LIGHT_THRESHOLD = 0.25
+
+
+@dataclass(frozen=True)
+class FrameAnalysis:
+    """Everything one pass over a frame produced.
+
+    The CLI and the app need the boxes, the light blobs *and* the advice. They
+    used to ask for each separately, which ran every detector twice per frame.
+    """
+
+    advice: NavigationAdvice
+    detections: List[Detection] = field(default_factory=list)
+    lights: List[LightSource] = field(default_factory=list)
+
+    @property
+    def light_quality(self) -> float:
+        return self.advice.light_quality
+
+    @property
+    def torch_advised(self) -> bool:
+        return self.advice.light_quality < TORCH_LIGHT_THRESHOLD
 
 
 class PathFinder:
@@ -37,9 +62,20 @@ class PathFinder:
         self.model_error: Optional[str] = None
 
         if use_model:
-            weights = model_path or self.settings.resolve_model_path()
-            if weights is None:
+            explicit = model_path or self.settings.model_path
+            if explicit is not None and not Path(explicit).exists():
+                # Silently falling back here is how a typo in --model or a stale
+                # EPF_MODEL_PATH produces classical-CV results that look like
+                # model output.
+                weights = None
                 self.model_error = (
+                    f"weights not found: {explicit} - running on classical CV only"
+                )
+            else:
+                weights = explicit or self.settings.resolve_model_path()
+
+            if weights is None:
+                self.model_error = self.model_error or (
                     "no trained weights found - running on classical CV only"
                 )
             elif not ultralytics_available():
@@ -93,10 +129,15 @@ class PathFinder:
         ]
         return non_max_suppression(weighted, iou_threshold=0.5)
 
-    def analyze(
+    def analyze_frame(
         self, frame: np.ndarray, device_orientation_deg: float = 0.0
-    ) -> NavigationAdvice:
-        """Full per-frame analysis: what is there and where to go."""
+    ) -> FrameAnalysis:
+        """One pass over a frame: detections, lights and the advice together.
+
+        Callers that need the boxes as well as the instruction must use this
+        rather than calling ``detect()`` and ``analyze()`` in sequence - that
+        ran every detector twice on every frame.
+        """
         detections = self.detect(frame)
         lights = self.fallback.detect_light_sources(frame)
         light_quality = estimate_light_quality(frame)
@@ -106,7 +147,7 @@ class PathFinder:
             # Only worth the Hough pass when there is nothing better to steer by.
             vanishing_point = self.fallback.detect_vanishing_point(frame)
 
-        return NavigationHelper.advise(
+        advice = NavigationHelper.advise(
             detections=detections,
             image_shape=frame.shape,
             light_quality=light_quality,
@@ -114,7 +155,16 @@ class PathFinder:
             vanishing_point=vanishing_point,
             device_orientation_deg=device_orientation_deg,
         )
+        return FrameAnalysis(advice=advice, detections=detections, lights=lights)
 
-    def should_enable_torch(self, frame: np.ndarray, threshold: float = 0.25) -> bool:
+    def analyze(
+        self, frame: np.ndarray, device_orientation_deg: float = 0.0
+    ) -> NavigationAdvice:
+        """Full per-frame analysis: what is there and where to go."""
+        return self.analyze_frame(frame, device_orientation_deg).advice
+
+    def should_enable_torch(
+        self, frame: np.ndarray, threshold: float = TORCH_LIGHT_THRESHOLD
+    ) -> bool:
         """Whether the app should switch the flashlight on for this frame."""
         return estimate_light_quality(frame) < threshold
